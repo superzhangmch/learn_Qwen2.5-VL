@@ -113,8 +113,9 @@ what can i do for you?<|im_end|>
 <|im_start|>user
 <|vision_start|><|image_pad|><|vision_end|><|vision_start|><|image_pad|><|vision_end|>what do you see in the picture?<|vision_start|><|video_pad|><|vision_end|>what text do you see in the movie?<|im_end|>
 <|im_start|>assistant
-            】
-            vision_start_token_id == '<|vision_start|>', 所以找出这样的标记，就知道有几个 img/video了。它后面跟着的要么是'<|image_pad|'== image_token_id,  要么是 '<|video_pad|>' == video_token_id. 所以下面两行，通过数这样的特殊token，就知道有几个 image，有几个 video 了。
+            】== input_ids,
+            其中 vision_start_token_id == '<|vision_start|>'。所以扫描下这样的标记，就知道有几个 img/video了。它后面跟着的要么是'<|image_pad|'== image_token_id,  
+            要么是 '<|video_pad|>' == video_token_id. 所以下面两行，通过数这样的特殊token，就知道有几个 image，有几个 video 了。
             '''
             vision_tokens = input_ids[vision_start_indices + 1]
             image_nums = (vision_tokens == image_token_id).sum()
@@ -124,17 +125,21 @@ what can i do for you?<|im_end|>
             st = 0
             remain_images, remain_videos = image_nums, video_nums
             for _ in range(image_nums + video_nums):
+                # find next img
                 if image_token_id in input_tokens and remain_images > 0:
                     ed_image = input_tokens.index(image_token_id, st)
                 else:
                     ed_image = len(input_tokens) + 1
+                # find next video
                 if video_token_id in input_tokens and remain_videos > 0:
                     ed_video = input_tokens.index(video_token_id, st)
                 else:
                     ed_video = len(input_tokens) + 1
+                
                 if ed_image < ed_video:
+                    # 本轮循环找到的是 img
                     t, h, w = (
-                        image_grid_thw[image_index][0],
+                        image_grid_thw[image_index][0], # image_grid_thw[] = {有几帧==1，height, weight}
                         image_grid_thw[image_index][1],
                         image_grid_thw[image_index][2],
                     )
@@ -144,8 +149,9 @@ what can i do for you?<|im_end|>
                     ed = ed_image
 
                 else:
+                    # 找到的是 video
                     t, h, w = (
-                        video_grid_thw[video_index][0],
+                        video_grid_thw[video_index][0], # video_grid_thw[] = {有几帧==具体帧数，height, weight}
                         video_grid_thw[video_index][1],
                         video_grid_thw[video_index][2],
                     )
@@ -156,12 +162,13 @@ what can i do for you?<|im_end|>
                     video_index += 1
                     remain_videos -= 1
                     ed = ed_video
+                    
                 llm_grid_t, llm_grid_h, llm_grid_w = (
                     t.item(),
                     h.item() // spatial_merge_size,
                     w.item() // spatial_merge_size,
                 )
-                text_len = ed - st
+                text_len = ed - st # st 是上一个 img或 video 结束的地方，ed 是这一次找到的 img或 video的位置，他们的差就是夹在中间的 text
 
                 st_idx = (
                     llm_pos_ids_list[-1].max() + 1 if len(llm_pos_ids_list) > 0 else 0

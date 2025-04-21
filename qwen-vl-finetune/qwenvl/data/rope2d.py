@@ -20,7 +20,7 @@ from decord import VideoReader
 import transformers
 
 
-def get_rope_index_25(
+def get_rope_index_25( # qianwen-vl-2.5 用它
     spatial_merge_size: Optional[int] = 2,
     input_ids: Optional[torch.LongTensor] = None,
     image_grid_thw: Optional[torch.LongTensor] = None,
@@ -103,9 +103,19 @@ def get_rope_index_25(
         for i, input_ids in enumerate(total_input_ids):
             input_ids = input_ids[attention_mask[i] == 1]
             image_nums, video_nums = 0, 0
-            vision_start_indices = torch.argwhere(
-                input_ids == vision_start_token_id
-            ).squeeze(1)
+            vision_start_indices = torch.argwhere(input_ids == vision_start_token_id).squeeze(1)
+            '''
+            原始prompt 最终转化城厦门这样格式：【
+            <|im_start|>user
+hello<|im_end|>
+<|im_start|>assistant
+what can i do for you?<|im_end|>
+<|im_start|>user
+<|vision_start|><|image_pad|><|vision_end|><|vision_start|><|image_pad|><|vision_end|>what do you see in the picture?<|vision_start|><|video_pad|><|vision_end|>what text do you see in the movie?<|im_end|>
+<|im_start|>assistant
+            】
+            vision_start_token_id == '<|vision_start|>', 所以找出这样的标记，就知道有几个 img/video了。它后面跟着的要么是'<|image_pad|'== image_token_id,  要么是 '<|video_pad|>' == video_token_id. 所以下面两行，通过数这样的特殊token，就知道有几个 image，有几个 video 了。
+            '''
             vision_tokens = input_ids[vision_start_indices + 1]
             image_nums = (vision_tokens == image_token_id).sum()
             video_nums = (vision_tokens == video_token_id).sum()
@@ -204,6 +214,7 @@ def get_rope_index_25(
         mrope_position_deltas = torch.tensor(
             mrope_position_deltas, device=input_ids.device
         ).unsqueeze(1)
+        # mrope_position_deltas.shape = (batch_size, 1), 所以是每一条数据一个数字，用来表示接下来生成的时候，从什么地方开始算位置编码
         return position_ids, mrope_position_deltas
     else:
         if attention_mask is not None:

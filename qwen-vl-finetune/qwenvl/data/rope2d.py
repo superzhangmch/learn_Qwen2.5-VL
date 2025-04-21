@@ -53,12 +53,19 @@ def get_rope_index_25( # qianwen-vl-2.5 用它
             temporal_patch_size: The number of frames that compose one temporal patch. Here, it's 2 frames.
             interval: The step size for the temporal position IDs, calculated as tokens_per_second * temporal_patch_size / fps. In this case, 25 * 2 / 1 = 50. This means that each temporal patch will be have a difference of 50 in the temporal position IDs.
             input_ids: [V V V V V V V V V V V V T T T T T], here V is for vision.
-            vision temporal position_ids: [0, 0, 0, 0, 50, 50, 50, 50, 100, 100, 100, 100]
-            vision height position_ids: [0, 0, 1, 1, 0, 0, 1, 1, 0, 0, 1, 1]
-            vision width position_ids: [0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1]
+            vision temporal position_ids: [0, 0, 0, 0, 50, 50, 50, 50, 100, 100, 100, 100] # 3 frames
+            vision height position_ids:   [0, 0, 1, 1,  0,  0,  1,  1,   0,   0,   1,   1] 
+            vision width position_ids:    [0, 1, 0, 1,  0,  1,  0,  1,   0,   1,   0,   1]
             text temporal position_ids: [101, 102, 103, 104, 105]
             text height position_ids: [101, 102, 103, 104, 105]
             text width position_ids: [101, 102, 103, 104, 105]
+
+            对于上面的第2个视频帧：
+            vision temporal position_ids: [..., 50, 50, 50, 50, ...]
+            vision height position_ids:   [..., 0,  0,  1,  1,  ...] 
+            vision width position_ids:    [..., 0,  1,  0,  1,  ...]
+            可以看到 (h, w) 构成了(0,0), (0, 1), (1, 0), (1, 1) 正好对应  2x2的 frame 分辨率
+
             Here we calculate the text start position_ids as the max vision position_ids plus 1.
 
     Args:
@@ -100,7 +107,7 @@ def get_rope_index_25( # qianwen-vl-2.5 用它
         )
         image_index, video_index = 0, 0
         attention_mask = attention_mask.to(total_input_ids.device)
-        for i, input_ids in enumerate(total_input_ids):
+        for i, input_ids in enumerate(total_input_ids): # 循环的是一个 batch 中的一条数据
             input_ids = input_ids[attention_mask[i] == 1]
             image_nums, video_nums = 0, 0
             vision_start_indices = torch.argwhere(input_ids == vision_start_token_id).squeeze(1)
@@ -168,37 +175,40 @@ what can i do for you?<|im_end|>
                     h.item() // spatial_merge_size,
                     w.item() // spatial_merge_size,
                 )
+
+                # 下面三句：如果上一次的 img/video 与本次的 img/video 中间夹着文字，要把这段 text 的 positions_ids 处理：方式是 t == h == w
                 text_len = ed - st # st 是上一个 img或 video 结束的地方，ed 是这一次找到的 img或 video的位置，他们的差就是夹在中间的 text
+                st_idx = (llm_pos_ids_list[-1].max() + 1 if len(llm_pos_ids_list) > 0 else 0)
+                llm_pos_ids_list.append(torch.arange(text_len).view(1, -1).expand(3, -1) + st_idx)
 
-                st_idx = (
-                    llm_pos_ids_list[-1].max() + 1 if len(llm_pos_ids_list) > 0 else 0
-                )
-                llm_pos_ids_list.append(
-                    torch.arange(text_len).view(1, -1).expand(3, -1) + st_idx
-                )
-
-                range_tensor = torch.arange(llm_grid_t).view(-1, 1)
+                # 对于本次循环找到的 img / video, 处理 t:
+                range_tensor = torch.arange(llm_grid_t).view(-1, 1) # torch.arange 生成 [0,1,2,3,...] 样数据。如果是图片，则只有一个
                 expanded_range = range_tensor.expand(-1, llm_grid_h * llm_grid_w)
-
-                time_tensor = expanded_range * second_per_grid_t * 2
-
+                time_tensor = expanded_range * second_per_grid_t * 2 # 即 t =[0*k, 1*k, 2*k, 3*k] 这样。这是为了应付 video 的动态帧率
                 time_tensor_long = time_tensor.long()
                 t_index = time_tensor_long.flatten()
 
+                # 对于本次循环找到的 img / video, 处理 h:
                 h_index = (
-                    torch.arange(llm_grid_h)
+                    torch.arange(llm_grid_h) # torch.arange 生成 [0,1,2,3,...]
                     .view(1, -1, 1)
                     .expand(llm_grid_t, -1, llm_grid_w)
                     .flatten()
                 )
+
+                # 对于本次循环找到的 img / video, 处理 w:
                 w_index = (
                     torch.arange(llm_grid_w)
                     .view(1, 1, -1)
                     .expand(llm_grid_t, llm_grid_h, -1)
                     .flatten()
                 )
+                
                 llm_pos_ids_list.append(
-                    torch.stack([t_index, h_index, w_index]) + text_len + st_idx
+                    torch.stack([t_index, h_index, w_index])                     # 未加text_len + st_idx前，三者都是0开始的
+                                                            + text_len + st_idx  # 加上：夹中间的 text，以及上一个img/video 的结束位置
+                                                                                 # 这样处理后，video/img 的每个位置id=[t,h,w]，后两维也是每见一个新的 img/video, 要齐头往前走，而不是从0开始
+                                                                                 # 注意对于video：每一帧的 h, w, 在同样位置都是一样的。
                 )
                 st = ed + llm_grid_t * llm_grid_h * llm_grid_w
 

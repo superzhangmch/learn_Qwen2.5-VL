@@ -1,3 +1,5 @@
+note：MRope 位置编码在 qwen-vl-finetune/qwenvl/data/rope2d.py
+
 # Qwen2.5-VL
 
 

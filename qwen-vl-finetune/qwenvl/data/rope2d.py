@@ -29,6 +29,8 @@ def get_rope_index_25( # qianwen-vl-2.5 用它
     attention_mask: Optional[torch.Tensor] = None,
 ) -> Tuple[torch.Tensor, torch.Tensor]:
     """
+    参考： https://spaces.ac.cn/archives/10352
+    
     Calculate the 3D rope index based on image and video's temporal, height and width in LLM.
 
     Explanation:
